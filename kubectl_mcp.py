@@ -227,3 +227,7 @@ async def kubectl_describe_resource(params: KubectlDescribeInput) -> str:
         return f"Error: {result.error_message}"
 
     return result.stdout
+
+
+if __name__ == "__main__":
+    mcp.run()
