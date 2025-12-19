@@ -15,6 +15,58 @@ class CommandResult:
     error_message: str | None = None
 
 
+class KubectlGetInput(BaseModel):
+    """Input model for kubectl get operations."""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra='forbid'
+    )
+
+    resource: str = Field(
+        ...,
+        description="Kuberenetes resource type",
+        min_length=1
+    )
+    namespace: Optional[str] = Field(
+        default=None,
+        description="namespace to query. Leave blank for cluster-scoped or default namespace"
+    )
+    selector: Optional[str] = Field(
+        default=None,
+        description="You can filter the list using a label selector and the --selector flag"
+    ) 
+    output_format: Optional[str] = Field(
+        default=None,
+        description="Output format: 'json', 'yaml', 'wide', or 'name'"
+    )
+
+
+class KubectlDescribeInput(BaseModel):
+    """Input model for kubectl describe operations."""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra='forbid'
+    )
+
+    resource_type: str = Field(
+        ...,
+        description="Kubernetes resource type",
+        min_length=1
+    )
+    name: Optional[str] = Field(
+        default=None,
+        description="Name or name prefix of the resource. If omitted, describes all resources of the given type."
+    )
+    namespace: Optional[str] = Field(
+        default=None,
+        description="Namespace to query. Leave blank for cluster-scoped resources or default namespace."
+    )
+    selector: Optional[str] = Field(
+        default=None,
+        description="Label selector to filter resources"
+    )
+
+
 def run_command_helper(command: list[str], timeout_seconds: int = 30) -> CommandResult:
     """
     Execute a kubectl command safely.
@@ -77,40 +129,12 @@ def run_command_helper(command: list[str], timeout_seconds: int = 30) -> Command
             error_message=f"Unexpected error: {type(e).__name__}: {str(e)}"
         )
 
-
-class KubectlGetInput(BaseModel):
-    """Input model for kubectl get operations."""
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        extra='forbid'
-    )
-
-    resource: str = Field(
-        ...,
-        description="Kuberenetes resource type",
-        min_length=1
-    )
-    namespace: Optional[str] = Field(
-        default=None,
-        description="namespace to query. Leave blank for cluster-scoped or default namespace"
-    )
-    selector: Optional[str] = Field(
-        default=None,
-        description="You can filter the list using a label selector and the --selector flag"
-    ) 
-    output_format: Optional[str] = Field(
-        default=None,
-        description="Output format: 'json', 'yaml', 'wide', or 'name'"
-    )
-
-
 mcp = FastMCP(
     name="HelpfulAssistant",
     instructions="""
         This server provides kubernetes cluster administration tools.
     """,
 )
-
 
 
 @mcp.tool(
@@ -160,6 +184,43 @@ async def kubectl_get_resource(params: KubectlGetInput) -> str:
     if params.selector:
         command.extend(["--selector", params.selector])
     
+    result = run_command_helper(command)
+
+    if not result.success:
+        return f"Error: {result.error_message}"
+
+    return result.stdout
+
+
+@mcp.tool(
+    name="kubectl_describe_resource",
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False
+    }
+)
+async def kubectl_describe_resource(params: KubectlDescribeInput) -> str:
+    """Show detailed information about a specific resource or group of resources.
+
+    Returns a detailed description including related resources like events and controllers.
+    You can select by exact name, name prefix, or label selector.
+
+    Args:
+        params: Validated input containing resource type, optional name/prefix,
+            namespace, and label selector for filtering.
+
+    Returns:
+        Detailed resource description, or an error message.
+    """
+    command = ["kubectl", "describe", params.resource_type]
+
+    if params.name:
+        command.append(params.name)
+    if params.namespace:
+        command.extend(["-n", params.namespace])
+    if params.selector:
+        command.extend(["--selector", params.selector])
+
     result = run_command_helper(command)
 
     if not result.success:
