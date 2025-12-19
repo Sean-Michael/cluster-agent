@@ -22,7 +22,7 @@ class OpenAITool(BaseModel):
     function: dict
 
 
-async def get_kubectl_tools(server_params: StdioServerParameters) -> list[object]:
+async def get_kubectl_tools(server_params: StdioServerParameters) -> list | None:
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -41,7 +41,7 @@ async def get_kubectl_tools(server_params: StdioServerParameters) -> list[object
                 return None
 
 
-def format_tools(mcp_tools: list[dict]) -> list[dict]:
+def format_tools(mcp_tools: list) -> list[dict]:
     formatted_tools = []
     for tool in mcp_tools:
         try:
@@ -70,7 +70,7 @@ async def main():
 
     kubectl_tools = await get_kubectl_tools(server_params)
     fmt_kubectl_tools = format_tools(kubectl_tools)
-    print(f"Formatted Tools:\n{list(t['function'].get('name') for t in fmt_kubectl_tools)}")
+    logger.info(f"Formatted Tools:\n{list(t['function'].get('name') for t in fmt_kubectl_tools)}")
 
 if __name__ == "__main__":
     asyncio.run(main())
