@@ -1,9 +1,8 @@
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field, ConfigDict
 from dataclasses import dataclass
-from typing import Optional, List, Union
+from typing import Optional
 import subprocess
-import json
 
 
 @dataclass
@@ -17,15 +16,66 @@ class CommandResult:
 
 
 def run_command_helper(command: list[str], timeout_seconds: int = 30) -> CommandResult:
+    """
+    Execute a kubectl command safely.
+
+    Args:
+        command: Command as a list of strings (never a shell string)
+        timeout_seconds: Max execution time before killing the process
+
+    Returns:
+        CommandResult with success status, output, and any errors
+    """
+    if isinstance(command, str):
+        return CommandResult(
+            success=False,
+            stdout="",
+            stderr="",
+            return_code=-1,
+            error_message="Security error: command must be a list, not a string"
+        )
+
     try:
         result = subprocess.run(
             command,
             capture_output=True,
             text=True,
-            check=True)
-        return result
+            timeout=timeout_seconds,
+            check=False
+        )
+
+        return CommandResult(
+            success=(result.returncode == 0),
+            stdout=result.stdout,
+            stderr=result.stderr,
+            return_code=result.returncode,
+            error_message=result.stderr if result.returncode != 0 else None
+        )
+
+    except subprocess.TimeoutExpired:
+        return CommandResult(
+            success=False,
+            stdout="",
+            stderr="",
+            return_code=-1,
+            error_message=f"Command timed out after {timeout_seconds} seconds"
+        )
+    except FileNotFoundError:
+        return CommandResult(
+            success=False,
+            stdout="",
+            stderr="",
+            return_code=-1,
+            error_message="kubectl not found."
+        )
     except Exception as e:
-        return e
+        return CommandResult(
+            success=False,
+            stdout="",
+            stderr="",
+            return_code=-1,
+            error_message=f"Unexpected error: {type(e).__name__}: {str(e)}"
+        )
 
 
 class KubectlGetInput(BaseModel):
@@ -63,12 +113,26 @@ mcp = FastMCP(
 
 
 
-@mcp.tool()
-async def get_all_api_resources():
-    """Get a JSON of all the Kubernetes API Resources"""
-    command = "kubectl api-resources -o json"
+@mcp.tool(
+    name="kubectl_get_api_resources",
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False
+    }
+)
+async def get_all_api_resources() -> str:
+    """Get all available Kubernetes API resources.
+
+    Returns:
+        JSON listing all API resources the cluster supports, or an error message.
+    """
+    command = ["kubectl", "api-resources", "-o", "json"]
     result = run_command_helper(command)
-    return json.loads(result.stdout)
+
+    if not result.success:
+        return f"Error: {result.error_message}"
+
+    return result.stdout
 
 
 @mcp.tool(    
@@ -97,4 +161,8 @@ async def kubectl_get_resource(params: KubectlGetInput) -> str:
         command.extend(["--selector", params.selector])
     
     result = run_command_helper(command)
+
+    if not result.success:
+        return f"Error: {result.error_message}"
+
     return result.stdout
