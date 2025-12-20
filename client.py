@@ -4,7 +4,8 @@ Simple MCP Client
 TODO:
 - [x] Connect to server and list tools.
 - [x] Create OpenAI/Ollama compatible tool formats
-- [ ] Handle chatting with tool calling
+- [x] Handle chatting with tool calling
+- [ ] Handle tool execution and callback
 
 """
 
