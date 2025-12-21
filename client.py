@@ -20,19 +20,63 @@ from contextlib import AsyncExitStack
 import ollama
 
 
-class MCPClient(BaseModel):
-    """An MCP Server Client"""
+class MCPClient:
     def __init__(self):
         self.session: ClientSession | None = None
-        self.tools: list[dict] = []
+        self.tools: list[MCPTool] = []
         self.exit_stack = AsyncExitStack()
-    
+
     async def connect_to_server(self, server_script_path: str):
         server_params = StdioServerParameters(
             command="python",
             args=[server_script_path],
         )
         stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
+        read, write = stdio_transport
+        self.session = await self.exit_stack.enter_async_context(ClientSession(read, write))
+        await self.session.initialize()
+        logger.info(f"Connected to MCP server: {server_script_path}")
+
+        await self.refresh_tools()
+
+    async def refresh_tools(self):
+        if not self.session:
+            raise RuntimeError("Not connected to a server")
+
+        response = await self.session.list_tools()
+        self.tools = response.tools
+        logger.info(f"Found {len(self.tools)} tools")
+        for tool in self.tools:
+            logger.debug(f"  - {tool.name}: {tool.description}")
+
+    def get_openai_tools(self) -> list[dict]:
+        return [t.model_dump() for t in format_tools(self.tools)]
+
+    async def call_tool(self, tool_name: str, arguments: dict) -> str:
+        if not self.session:
+            raise RuntimeError("Not connected to a server")
+
+        logger.info(f"Calling tool: {tool_name} with args: {arguments}")
+        result = await self.session.call_tool(tool_name, arguments)
+
+        content_parts = []
+        for content in result.content:
+            if hasattr(content, 'text'):
+                content_parts.append(content.text)
+
+        return "\n".join(content_parts)
+
+    async def close(self):
+        await self.exit_stack.aclose()
+        self.session = None
+        self.tools = []
+        logger.info("MCP client connection closed")
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
 
 
 
@@ -94,23 +138,25 @@ def chat_with_tool(model: str, messages: dict[str], tools: list[OpenAITool]) -> 
         return None
 
 
-async def start_mcp_session()
-
-
 async def main():
     logging.basicConfig(level=logging.INFO)
 
-    server_params = StdioServerParameters(
-        command="python",
-        args=["kubectl_mcp.py"],
-    )
+    async with MCPClient() as client:
+        await client.connect_to_server("kubectl_mcp.py")
 
-    kubectl_tools = await get_kubectl_tools(server_params)
-    kubectl_tools_dict = [t.model_dump() for t in format_tools(kubectl_tools)]
+        tools = client.get_openai_tools()
 
-    messages = [{"role": "user", "content": "Show me what nodes are in my kubernetes cluster"}]
-    test_response = chat_with_tool("mistral-nemo:latest", messages, kubectl_tools_dict)
-    print(test_response)
+        messages = [{"role": "user", "content": "Show me what nodes are in my kubernetes cluster"}]
+        response = chat_with_tool("mistral-nemo:latest", messages, tools)
+
+        if response and response.message.tool_calls:
+            for tool_call in response.message.tool_calls:
+                tool_name = tool_call.function.name
+                arguments = tool_call.function.arguments
+                result = await client.call_tool(tool_name, arguments)
+                print(f"Tool {tool_name} result:\n{result}")
+        else:
+            print(response.message.content if response else "No response")
 
 if __name__ == "__main__":
     asyncio.run(main())
