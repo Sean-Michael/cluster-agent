@@ -16,7 +16,24 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.types import Tool as MCPTool
 from mcp.client.stdio import stdio_client
 from pydantic import BaseModel
+from contextlib import AsyncExitStack
 import ollama
+
+
+class MCPClient(BaseModel):
+    """An MCP Server Client"""
+    def __init__(self):
+        self.session: ClientSession | None = None
+        self.tools: list[dict] = []
+        self.exit_stack = AsyncExitStack()
+    
+    async def connect_to_server(self, server_script_path: str):
+        server_params = StdioServerParameters(
+            command="python",
+            args=[server_script_path],
+        )
+        stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
+
 
 
 class OpenAITool(BaseModel):
@@ -75,6 +92,9 @@ def chat_with_tool(model: str, messages: dict[str], tools: list[OpenAITool]) -> 
     except Exception as e:
         logger.error(f"Exception in Ollama chat: {e}")
         return None
+
+
+async def start_mcp_session()
 
 
 async def main():
